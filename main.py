@@ -29,6 +29,11 @@ if __name__ == '__main__':
     argParser.add_argument("-n", "--number", type=int, help="your desired number of generated data to be selected.", required=False)
     argParser.add_argument("-dis", "--dissimilar", action="store_true", help="To find similar or dissimilar instances.", required=False)
     argParser.add_argument("-fn", "--filename", type=str, help="the output file name", required=False)
+
+    ### ADDED FOR RANDOM SELECTION
+    argParser.add_argument("-rnd", "--random", action="store_true",
+                           help="Random K selection instead of similarity ranking.")
+
     args = argParser.parse_args()
     print("Below are the arguments entered ...")
     print("source-side OOD= %s" % args.generic_src)
@@ -37,6 +42,10 @@ if __name__ == '__main__':
     print("K= %s" % args.k)
     print("N= %s" % args.number)
     print("Dissimilar= %s" % args.dissimilar)
+
+    ### ADDED FOR RANDOM SELECTION
+    print("Random= %s" % args.random)
+
     print("FileName= %s" % args.filename)
     #----------------------------------
     # Embedding OOD
@@ -48,6 +57,10 @@ if __name__ == '__main__':
     Number = args.number
     Dissimilar = args.dissimilar
     FileName = args.filename
+
+    ### ADDED FOR RANDOM SELECTION
+    RandomSelect = args.random
+
     #----------------------------------
     with open(OOD_src, 'rb') as e:
         content = e.readlines()
@@ -76,16 +89,13 @@ if __name__ == '__main__':
     #-------------------------------------
     # Save shuffle for ODD parallel corpora
     if not os.path.exists('OOD.pkl'):
-        # Start the multi-process pool on all available CUDA devices
         pool = model.start_multi_process_pool()
-        # Compute the embeddings using the multi-process pool
         emb = model.encode_multi_process(OOD_sentences, pool)
-        print("Embeddings computed shape:", emb.shape)
-        # Optional: Stop the proccesses in the pool
         model.stop_multi_process_pool(pool)
         print("The OOD is being saved into a file named, OOD.pkl")
         with open('OOD.pkl', 'wb') as pickle_file:
             pickle.dump({'source_sentences': source, 'source_embeddings': emb, 'target_sentences': target}, pickle_file, protocol=pickle.HIGHEST_PROTOCOL)
+
     #-------------------------------------
     # Loading the pkl file
     with open('OOD.pkl', 'rb') as pickle_load:
@@ -93,9 +103,10 @@ if __name__ == '__main__':
         OOD_sentences_source = OOD_data['source_sentences']
         OOD_embeddings = OOD_data['source_embeddings']
         OOD_sentences_target = OOD_data['target_sentences']
-    #-------------------------------------
+
     print("A sample of OOD: ", OOD_sentences[0])
     print("A sample of OOD embedding vector: ", OOD_embeddings[0][:])
+
     #-------------------------------------
     # Stats
     M = len(OOD_sentences_source)
@@ -103,20 +114,23 @@ if __name__ == '__main__':
     print("OOD Source embedding shape:", OOD_embeddings.shape)
     N = len(OOD_sentences_target)
     print("OOD target length:", N)
+
     #-------------------------------------
     # Move the OOD embs to the GPU
     OOD_embeddings = torch.tensor(OOD_embeddings, device="cuda")
+
     #-------------------------------------
     # Read the ID
     with open(ID) as f:
         content = f.readlines()
         content = [x.strip() for x in content]
     ID = content
+
     #---------------Chunks----------------
     def split(list_a, chunk_size):
         for i in range(0, len(list_a), chunk_size):
             yield list_a[i:i + chunk_size]
-    #-------------------------------------
+
     if Number == None:
         Number = len(ID)
         splits_raw = 1
@@ -128,21 +142,22 @@ if __name__ == '__main__':
     else:
         splits_raw = 1
         splits = M
-    #-------------------------------------    
+
     queries = ID[:Number]
-    #-------------------------------------
+
     OOD_sentences_source = list(split(OOD_sentences_source, splits))
     OOD_sentences_target = list(split(OOD_sentences_target, splits))
-    OOD_embeddings = list(split(OOD_embeddings,splits))
-    #-------------------------------------
+    OOD_embeddings = list(split(OOD_embeddings, splits))
+
     print("ID length: ", len(queries))
+
     #-------------------------------------
     for i in range(0, splits_raw):
         print("Split ", i)
         embedder = SentenceTransformer('joyebright/stsb-xlm-r-multilingual-32dim')
         top_k = min(K, len(OOD_sentences_source[i]))
         dat = pd.DataFrame([])
-        
+
         cols = ['Query']
         for j in range(0, K):
             cols.append('top'+str(j+1))
@@ -151,16 +166,23 @@ if __name__ == '__main__':
 
         dat = pd.DataFrame(columns = cols)
         index = 0
-        for query in queries:  
+        for query in queries:
             print(index)  
             index+=1
             query_embedding = embedder.encode(query, convert_to_tensor=True)
-            # We use cosine-similarity and torch.topk to find the highest 5 scores
             cos_scores = util.pytorch_cos_sim(query_embedding, OOD_embeddings[i])[0]
-            if Dissimilar == False:
+
+            ### ADDED FOR RANDOM SELECTION
+            if RandomSelect:
+                rand_idx = np.random.choice(len(OOD_sentences_source[i]), top_k, replace=False)
+                top_results = (cos_scores[rand_idx], torch.tensor(rand_idx, device=cos_scores.device))
+
+            elif Dissimilar == False:
                 top_results = torch.topk(cos_scores, k=top_k)
-            if Dissimilar == True:
+
+            elif Dissimilar == True:
                 top_results = torch.topk(cos_scores, k=top_k, largest=False)
+
             print(query)
             print(OOD_sentences_source[i][top_results[1][0]])
             print(OOD_sentences_target[i][top_results[1][0]])
