@@ -5,6 +5,7 @@ from tqdm import tqdm
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
 import logging
+# logging.basicConfig(level = logging.INFO)
 import pickle
 import numpy as np
 import pandas as pd
@@ -13,40 +14,41 @@ import os
 import time
 
 if __name__ == '__main__':
-    start_time = time.time()
-
+    start_time = time.time()  # Start timing
     #----------------------------------
-    # Arguments
+    # Takes the arguments from the input
     #----------------------------------
     argParser = argparse.ArgumentParser()
+    # The first two arguments are the path to OOD source and target
+    argParser.add_argument("-ood_src", "--generic_src", help="the path to source-side generic corpus", required=True)
+    argParser.add_argument("-ood_tgt", "--generic_tgt", help="the path to target-side generic corpus", required=True)
+    # The third argument is the path to ID
+    argParser.add_argument("-id", "--specific", help="the path to domain-specific corpus", required=True)
+    # The fourth argument is the desired number of generated data to be selected
+    argParser.add_argument("-k", "--k", type=int, default = 5, help="your desired number of samples selected per entry.", required=False)
+    argParser.add_argument("-n", "--number", type=int, help="your desired number of generated data to be selected.", required=False)
+    argParser.add_argument("-dis", "--dissimilar", action="store_true", help="To find similar or dissimilar instances.", required=False)
+    argParser.add_argument("-fn", "--filename", type=str, help="the output file name", required=False)
 
-    argParser.add_argument("-ood_src", "--generic_src", help="path to source-side generic corpus", required=True)
-    argParser.add_argument("-ood_tgt", "--generic_tgt", help="path to target-side generic corpus", required=True)
-    argParser.add_argument("-id", "--specific", help="path to domain-specific corpus", required=True)
-
-    argParser.add_argument("-k", "--k", type=int, default=5, help="top-K samples per query", required=False)
-    argParser.add_argument("-n", "--number", type=int, help="num of ID samples used", required=False)
-
-    argParser.add_argument("-dis", "--dissimilar", action="store_true", help="retrieve dissimilar instead of similar")
-    argParser.add_argument("-rnd", "--random", action="store_true", help="random selection instead of similarity ranking")
-
-    argParser.add_argument("-fn", "--filename", type=str, help="output filename base", required=False)
+    ### ADDED FOR RANDOM SELECTION
+    argParser.add_argument("-rnd", "--random", action="store_true",
+                           help="Random K selection instead of similarity ranking.")
 
     args = argParser.parse_args()
+    print("Below are the arguments entered ...")
+    print("source-side OOD= %s" % args.generic_src)
+    print("target-side OOD= %s" % args.generic_tgt)
+    print("ID= %s" % args.specific)
+    print("K= %s" % args.k)
+    print("N= %s" % args.number)
+    print("Dissimilar= %s" % args.dissimilar)
 
-    print("=========== INPUT ARGUMENTS ===========")
-    print("source-side OOD =", args.generic_src)
-    print("target-side OOD =", args.generic_tgt)
-    print("ID =", args.specific)
-    print("K =", args.k)
-    print("N =", args.number)
-    print("Dissimilar =", args.dissimilar)
-    print("Random Selection =", args.random)
-    print("FileName =", args.filename)
-    print("=======================================\n")
+    ### ADDED FOR RANDOM SELECTION
+    print("Random= %s" % args.random)
 
+    print("FileName= %s" % args.filename)
     #----------------------------------
-    # Setup Variables
+    # Embedding OOD
     #----------------------------------
     OOD_src = args.generic_src
     OOD_tgt = args.generic_tgt
@@ -54,84 +56,89 @@ if __name__ == '__main__':
     K = args.k
     Number = args.number
     Dissimilar = args.dissimilar
-    RandomSelect = args.random
     FileName = args.filename
 
-    #----------------------------------
-    # Load corpora
+    ### ADDED FOR RANDOM SELECTION
+    RandomSelect = args.random
+
     #----------------------------------
     with open(OOD_src, 'rb') as e:
-        content = [x.strip().decode("utf-8") for x in tqdm(e.readlines())]
+        content = e.readlines()
+        content = [x.strip() for x in tqdm(content)]
     source = content
-    print("Source length:", len(source))
-
+    source_new = []
+    for sentences in source:
+        source_new.append(sentences.decode('utf-8'))
+    source = source_new
+    print("Source length:",len(source))
+    #------------------------------------
     with open(OOD_tgt, 'rb') as f:
-        content2 = [x.strip().decode("utf-8") for x in tqdm(f.readlines())]
+        content2 = f.readlines()
+        content2 = [x.strip() for x in tqdm(content2)]
     target = content2
-    print("Target length:", len(target))
-
+    target_new = []
+    for sentences in target:
+        target_new.append(sentences.decode('utf-8'))   
+    target = target_new
+    print("Target length:",len(target))
+    #-------------------------------------
     OOD_sentences = source
-
-    #----------------------------------
-    # Embedding OOD if not cached
-    #----------------------------------
+    # Invoke the model
     print("Load the model ...")
-    model = SentenceTransformer("joyebright/stsb-xlm-r-multilingual-32dim", device="cuda")
-
-    if not os.path.exists("OOD.pkl"):
+    model = SentenceTransformer('joyebright/stsb-xlm-r-multilingual-32dim', device='cuda')
+    #-------------------------------------
+    # Save shuffle for ODD parallel corpora
+    if not os.path.exists('OOD.pkl'):
         pool = model.start_multi_process_pool()
         emb = model.encode_multi_process(OOD_sentences, pool)
         model.stop_multi_process_pool(pool)
+        print("The OOD is being saved into a file named, OOD.pkl")
+        with open('OOD.pkl', 'wb') as pickle_file:
+            pickle.dump({'source_sentences': source, 'source_embeddings': emb, 'target_sentences': target}, pickle_file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        print("Saving OOD.embeddings -> OOD.pkl")
-        with open("OOD.pkl", "wb") as pf:
-            pickle.dump(
-                {
-                    "source_sentences": source,
-                    "source_embeddings": emb,
-                    "target_sentences": target,
-                },
-                pf,
-                protocol=pickle.HIGHEST_PROTOCOL,
-            )
+    #-------------------------------------
+    # Loading the pkl file
+    with open('OOD.pkl', 'rb') as pickle_load:
+        OOD_data = pickle.load(pickle_load)
+        OOD_sentences_source = OOD_data['source_sentences']
+        OOD_embeddings = OOD_data['source_embeddings']
+        OOD_sentences_target = OOD_data['target_sentences']
 
-    #----------------------------------
-    # Load cached embeddings
-    #----------------------------------
-    with open("OOD.pkl", "rb") as pl:
-        data = pickle.load(pl)
-        OOD_sentences_source = data["source_sentences"]
-        OOD_embeddings = data["source_embeddings"]
-        OOD_sentences_target = data["target_sentences"]
+    print("A sample of OOD: ", OOD_sentences[0])
+    print("A sample of OOD embedding vector: ", OOD_embeddings[0][:])
 
+    #-------------------------------------
+    # Stats
     M = len(OOD_sentences_source)
-    print("OOD size:", M)
+    print("OOD Source length:", M)
+    print("OOD Source embedding shape:", OOD_embeddings.shape)
+    N = len(OOD_sentences_target)
+    print("OOD target length:", N)
 
-    # Move embeddings to GPU
+    #-------------------------------------
+    # Move the OOD embs to the GPU
     OOD_embeddings = torch.tensor(OOD_embeddings, device="cuda")
 
-    #----------------------------------
-    # Load ID sentences
-    #----------------------------------
+    #-------------------------------------
+    # Read the ID
     with open(ID) as f:
-        content = [x.strip() for x in f.readlines()]
+        content = f.readlines()
+        content = [x.strip() for x in content]
     ID = content
 
-    #----------------------------------
-    # Determine number of splits
-    #----------------------------------
+    #---------------Chunks----------------
     def split(list_a, chunk_size):
         for i in range(0, len(list_a), chunk_size):
             yield list_a[i:i + chunk_size]
 
-    if Number is None:
+    if Number == None:
         Number = len(ID)
         splits_raw = 1
         splits = M
     elif Number > len(ID):
-        splits_raw = math.ceil(Number / len(ID))
-        splits = math.ceil(M / splits_raw)
-        print("Desired N exceeds ID size. Splitting OOD into", splits, "chunks.")
+        splits_raw = math.ceil(Number/len(ID))
+        splits = math.ceil(M/splits_raw)
+        print("The desired number exceeds the number of available ID samples. The tool splits your OOD into ", splits, " to generate more ID sentences.")
     else:
         splits_raw = 1
         splits = M
@@ -142,55 +149,59 @@ if __name__ == '__main__':
     OOD_sentences_target = list(split(OOD_sentences_target, splits))
     OOD_embeddings = list(split(OOD_embeddings, splits))
 
-    print("ID length:", len(queries))
+    print("ID length: ", len(queries))
 
-    #----------------------------------
-    # Retrieval loop
-    #----------------------------------
+    #-------------------------------------
     for i in range(0, splits_raw):
-        print("Split", i)
-        embedder = SentenceTransformer("joyebright/stsb-xlm-r-multilingual-32dim")
-
+        print("Split ", i)
+        embedder = SentenceTransformer('joyebright/stsb-xlm-r-multilingual-32dim')
         top_k = min(K, len(OOD_sentences_source[i]))
-        cols = ["Query"] + [f"top{j+1}" for j in range(K)] + \
-                          [f"top{j+1}_trg" for j in range(K)] + \
-                          [f"top{j+1}_score" for j in range(K)]
-        dat = pd.DataFrame(columns=cols)
+        dat = pd.DataFrame([])
 
-        for idx, query in enumerate(queries):
-            print(idx, query)
+        cols = ['Query']
+        for j in range(0, K):
+            cols.append('top'+str(j+1))
+            cols.append('top'+str(j+1)+'_trg'+str(j+1))
+            cols.append('top'+str(j+1)+'_score'+str(j+1))
+
+        dat = pd.DataFrame(columns = cols)
+        index = 0
+        for query in queries:
+            print(index)  
+            index+=1
             query_embedding = embedder.encode(query, convert_to_tensor=True)
             cos_scores = util.pytorch_cos_sim(query_embedding, OOD_embeddings[i])[0]
 
-            # ---------------- RANDOM SELECTION ----------------
+            ### ADDED FOR RANDOM SELECTION
             if RandomSelect:
                 rand_idx = np.random.choice(len(OOD_sentences_source[i]), top_k, replace=False)
-                selected_scores = cos_scores[rand_idx]
-                selected_idx = torch.tensor(rand_idx, device=cos_scores.device)
-                top_results = (selected_scores, selected_idx)
+                top_results = (cos_scores[rand_idx], torch.tensor(rand_idx, device=cos_scores.device))
 
-            # ---------------- TOP SIMILAR ----------------
-            elif not Dissimilar:
+            elif Dissimilar == False:
                 top_results = torch.topk(cos_scores, k=top_k)
 
-            # ---------------- TOP DISSIMILAR ----------------
-            else:
+            elif Dissimilar == True:
                 top_results = torch.topk(cos_scores, k=top_k, largest=False)
 
-            S = [query]
-            for n in range(top_k):
-                src = OOD_sentences_source[i][top_results[1][n]]
-                tgt = OOD_sentences_target[i][top_results[1][n]]
-                sc = float(top_results[0][n])
-                S.append(src)
-                S.append(tgt)
-                S.append(f"(Score: {sc:.4f})")
+            print(query)
+            print(OOD_sentences_source[i][top_results[1][0]])
+            print(OOD_sentences_target[i][top_results[1][0]])
 
-            dat = dat._append(pd.Series(S, index=dat.columns), ignore_index=True)
+            S =[]
+            S.append(query)
+            for n in range(0, K):
+                S.append(OOD_sentences_source[i][top_results[1][n]])
+                S.append(OOD_sentences_target[i][top_results[1][n]])
+                S.append("(Score: {:.4f})".format(top_results[0][n]))
 
-        # Save output
-        out_name = f"{FileName}_{i+1}.csv" if FileName else f"final_similar_{i+1}.csv"
-        dat.to_csv(out_name, index=True)
-        print(f"Saved {out_name}")
+            new_S = pd.Series(S, index=dat.columns)
+            dat = dat._append(new_S, ignore_index=True)
 
-    print(f"\nTotal execution time: {(time.time() - start_time)/60:.2f} minutes\n")
+        print("We are done ...")
+
+        if FileName == None:
+            dat.to_csv("final_similar_" + str(i+1)+".csv",index=True)
+        else:
+            dat.to_csv(FileName + "_" + str(i+1) + ".csv",index=True)
+            
+    print(f"Execution time: {(time.time() - start_time) / 60:.2f} minutes") # end of time
