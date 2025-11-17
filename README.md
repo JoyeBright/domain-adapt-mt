@@ -13,11 +13,7 @@ This Python tool is based on our earlier work:  🔗 [JoyeBright/DataSelection-N
 - If the value of `n` exceeds the number of available samples for the domain-specific corpus (iii), the generic corpora will be divided into equal parts. However, it is important to note that dividing the generic corpus in this way requires a large and diverse enough corpus to generate similar sentences.
 - The original model had a word embedding dimension of 768, which might be too computationally intensive for some users. As a solution, we decreased the embedding dimensions to 32. You can access the final model at our HF repository using this [URL](https://huggingface.co/joyebright/stsb-xlm-r-multilingual-32dim). However, if your system can handle the model with 768 dimensions, we suggest using the original model that can be found at this link: https://huggingface.co/sentence-transformers/stsb-xlm-r-multilingual. The tool is configured to use the 32-dimensional model as the default option.
 - We advise utilizing a single GPU instead of multiple GPUs to avoid potential conflicts that may arise from loading sentences across two separate GPUs. To specify CUDA device X, you would use this command: `export CUDA_VISIBLE_DEVICES=X`
-
-### Extra Argument
-| Argument | Description |
-|---------|-------------|
-| `--rnd` or `-rnd` | Selects **K** random samples from the OOD corpus instead of using similarity scores. Useful for ablation or baseline comparisons. |
+- `--rnd` or `-rnd` Selects **K** random samples from the OOD corpus instead of using similarity scores. Useful for ablation or baseline comparisons.
 
 🔍 **Check the [`Examples/`](Examples/) folder to see how the tool works with sample files and recommended settings.**
 
